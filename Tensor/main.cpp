@@ -191,6 +191,8 @@ int main(int argc, const char * argv[]) {
     otter::Tensor out;
     ex.extract("c_1", out, 0);
     cout << out << endl;
+
+    auto branch_test = otter::tensor({1, 2, 3}, otter::ScalarType::Float);
     
     return 0;
 }
