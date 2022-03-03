@@ -193,6 +193,8 @@ int main(int argc, const char * argv[]) {
     cout << out << endl;
 
     auto branch_test = otter::tensor({1, 2, 3}, otter::ScalarType::Float);
+
+    auto pull_test = otter::tensor({1, 2, 3}, otter::ScalarType::Float);
     
     return 0;
 }
