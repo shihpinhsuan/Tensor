@@ -22,29 +22,27 @@ void im2col_sgemm_conv2d_impl(
     const Tensor& im2col_,
     const Tensor& kernel_pack4x4_,
     const Tensor& bias_,
-    int64_t n_input_planes,
-    int64_t n_output_planes,
+    int64_t input_channels,
+    int64_t output_channels,
     Tensor& output) {
     
-    Tensor im2col = im2col_.view({n_input_planes, -1, im2col_.size(2)});
+    Tensor im2col = im2col_.view({input_channels, -1, im2col_.size(2)});
     const float* bias = (bias_.defined()) ? bias_.data_ptr<float>() : nullptr;
     
     const int64_t outSize = im2col.size(2); // im2col width = output_height * output_width
     const int64_t kernelSize = im2col.size(1); // kernel_height * kernel_width
-    const int64_t in_channels = n_input_planes;
-    const int64_t out_channels = n_output_planes;
     
     Tensor tmp;
     int64_t packChannel = outSize;
-    int64_t packHeight  = in_channels;
+    int64_t packHeight  = input_channels;
     int64_t packWidth   = kernelSize;
     if (outSize >= 8) {        // pack 8x8
         packChannel = outSize / 8 + (outSize % 8) / 4 + outSize % 4;
-        packHeight  = in_channels;
+        packHeight  = input_channels;
         packWidth   = 8 * kernelSize;
     } else if (outSize >= 4) { // pack 4x4
         packChannel = outSize / 4 + outSize % 4;
-        packHeight  = in_channels;
+        packHeight  = input_channels;
         packWidth   = 4 * kernelSize;
     }
     tmp = otter::full({packChannel, packHeight, packWidth}, -1, ScalarType::Float);
@@ -60,7 +58,7 @@ void im2col_sgemm_conv2d_impl(
             int64_t index = remainColCount + i * 8;
             float* tmpptr = tmp_a[index / 8].data();
             
-            for (const auto q : otter::irange(in_channels)) {
+            for (const auto q : otter::irange(input_channels)) {
                 const float* img0 = (const float*)im2col_a[q].data() + index;
                 
                 for (const auto k : otter::irange(kernelSize)) {
@@ -82,7 +80,7 @@ void im2col_sgemm_conv2d_impl(
             int64_t index = remainColCount + i * 4;
             float* tmpptr = tmp_a[index / 8 + (index % 8) / 4].data();
             
-            for (const auto q : otter::irange(in_channels)) {
+            for (const auto q : otter::irange(input_channels)) {
                 const float* img0 = (const float*)im2col_a[q].data() + index;
                 
                 for (const auto k : otter::irange(kernelSize)) {
@@ -101,7 +99,7 @@ void im2col_sgemm_conv2d_impl(
         for (auto i : otter::irange(start, end)) {
             float* tmpptr = tmp_a[i / 8 + (i % 8) / 4 + i % 4].data();
             
-            for(const auto q : otter::irange(in_channels)) {
+            for(const auto q : otter::irange(input_channels)) {
                 const float* img0 = (const float*)im2col_a[q].data() + i;
                 
                 for (const auto k : otter::irange(kernelSize)) {
@@ -121,7 +119,7 @@ void im2col_sgemm_conv2d_impl(
     auto kernel_a = kernel_pack4x4_.accessor<float, 3>();
     
 #if __aarch64__
-    ccOutChannel = out_channels >> 3;
+    ccOutChannel = output_channels >> 3;
     ccRemainOutChannel = ccOutChannel << 3;
     
     otter::parallel_for(0, ccOutChannel, 1, [&](int64_t start, int64_t end) {
@@ -145,7 +143,7 @@ void im2col_sgemm_conv2d_impl(
                 const float* tmpptr = tmp_a[i / 8].data();
                 const float* kptr = kernel_a[p / 8].data();
                 
-                int64_t nn = in_channels * kernelSize;
+                int64_t nn = input_channels * kernelSize;
                 
                 float32x4_t _b0 = vld1q_f32(biasptr);
                 float32x4_t _b1 = vld1q_f32(biasptr + 4);
@@ -158,8 +156,9 @@ void im2col_sgemm_conv2d_impl(
                 float32x4_t _sum5 = vdupq_n_f32(_b0[2]);
                 float32x4_t _sum6 = vdupq_n_f32(_b0[3]);
                 float32x4_t _sum7 = vdupq_n_f32(_b0[3]);
-                float32x4_t _sum8  = vdupq_n_f32(_b1[0]);
-                float32x4_t _sum9  = vdupq_n_f32(_b1[0]);
+                
+                float32x4_t _sum8 = vdupq_n_f32(_b1[0]);
+                float32x4_t _sum9 = vdupq_n_f32(_b1[0]);
                 float32x4_t _sum10 = vdupq_n_f32(_b1[1]);
                 float32x4_t _sum11 = vdupq_n_f32(_b1[1]);
                 float32x4_t _sum12 = vdupq_n_f32(_b1[2]);
@@ -168,13 +167,13 @@ void im2col_sgemm_conv2d_impl(
                 float32x4_t _sum15 = vdupq_n_f32(_b1[3]);
                 
                 for (int64_t w = nn >> 2; w != 0; --w) {
-                    float32x4_t _val0 = vld1q_f32(tmpptr + 0);
+                    float32x4_t _val0 = vld1q_f32(tmpptr);
                     float32x4_t _val1 = vld1q_f32(tmpptr + 4);
                     float32x4_t _val2 = vld1q_f32(tmpptr + 8);
                     float32x4_t _val3 = vld1q_f32(tmpptr + 12);
                     tmpptr += 16;
-
-                    float32x4_t _w0 = vld1q_f32(kptr + 0);
+                    
+                    float32x4_t _w0 = vld1q_f32(kptr);
                     float32x4_t _w1 = vld1q_f32(kptr + 4);
                     float32x4_t _w2 = vld1q_f32(kptr + 8);
                     float32x4_t _w3 = vld1q_f32(kptr + 12);
@@ -184,23 +183,21 @@ void im2col_sgemm_conv2d_impl(
                     _sum2 = vfmaq_f32(_sum2, _val0, vdupq_n_f32(_w0[1]));
                     _sum4 = vfmaq_f32(_sum4, _val0, vdupq_n_f32(_w0[2]));
                     _sum6 = vfmaq_f32(_sum6, _val0, vdupq_n_f32(_w0[3]));
-
                     _sum1 = vfmaq_f32(_sum1, _val1, vdupq_n_f32(_w0[0]));
                     _sum3 = vfmaq_f32(_sum3, _val1, vdupq_n_f32(_w0[1]));
                     _sum5 = vfmaq_f32(_sum5, _val1, vdupq_n_f32(_w0[2]));
                     _sum7 = vfmaq_f32(_sum7, _val1, vdupq_n_f32(_w0[3]));
                     
-                    _sum8 = vfmaq_f32(_sum8, _val0, vdupq_n_f32(_w1[0]));
+                    _sum8  = vfmaq_f32(_sum8,  _val0, vdupq_n_f32(_w1[0]));
                     _sum10 = vfmaq_f32(_sum10, _val0, vdupq_n_f32(_w1[1]));
                     _sum12 = vfmaq_f32(_sum12, _val0, vdupq_n_f32(_w1[2]));
                     _sum14 = vfmaq_f32(_sum14, _val0, vdupq_n_f32(_w1[3]));
-
-                    _sum9 = vfmaq_f32(_sum9, _val1, vdupq_n_f32(_w1[0]));
+                    _sum9  = vfmaq_f32(_sum9,  _val1, vdupq_n_f32(_w1[0]));
                     _sum11 = vfmaq_f32(_sum11, _val1, vdupq_n_f32(_w1[1]));
                     _sum13 = vfmaq_f32(_sum13, _val1, vdupq_n_f32(_w1[2]));
                     _sum15 = vfmaq_f32(_sum15, _val1, vdupq_n_f32(_w1[3]));
                     
-                    float32x4_t _val4 = vld1q_f32(tmpptr + 0);
+                    float32x4_t _val4 = vld1q_f32(tmpptr);
                     float32x4_t _val5 = vld1q_f32(tmpptr + 4);
                     float32x4_t _val6 = vld1q_f32(tmpptr + 8);
                     float32x4_t _val7 = vld1q_f32(tmpptr + 12);
@@ -210,23 +207,21 @@ void im2col_sgemm_conv2d_impl(
                     _sum2 = vfmaq_f32(_sum2, _val2, vdupq_n_f32(_w2[1]));
                     _sum4 = vfmaq_f32(_sum4, _val2, vdupq_n_f32(_w2[2]));
                     _sum6 = vfmaq_f32(_sum6, _val2, vdupq_n_f32(_w2[3]));
-
                     _sum1 = vfmaq_f32(_sum1, _val3, vdupq_n_f32(_w2[0]));
                     _sum3 = vfmaq_f32(_sum3, _val3, vdupq_n_f32(_w2[1]));
                     _sum5 = vfmaq_f32(_sum5, _val3, vdupq_n_f32(_w2[2]));
                     _sum7 = vfmaq_f32(_sum7, _val3, vdupq_n_f32(_w2[3]));
                     
-                    _sum8 = vfmaq_f32(_sum8, _val2, vdupq_n_f32(_w3[0]));
+                    _sum8  = vfmaq_f32(_sum8,  _val2, vdupq_n_f32(_w3[0]));
                     _sum10 = vfmaq_f32(_sum10, _val2, vdupq_n_f32(_w3[1]));
                     _sum12 = vfmaq_f32(_sum12, _val2, vdupq_n_f32(_w3[2]));
                     _sum14 = vfmaq_f32(_sum14, _val2, vdupq_n_f32(_w3[3]));
-
-                    _sum9 = vfmaq_f32(_sum9, _val3, vdupq_n_f32(_w3[0]));
+                    _sum9  = vfmaq_f32(_sum9,  _val3, vdupq_n_f32(_w3[0]));
                     _sum11 = vfmaq_f32(_sum11, _val3, vdupq_n_f32(_w3[1]));
                     _sum13 = vfmaq_f32(_sum13, _val3, vdupq_n_f32(_w3[2]));
                     _sum15 = vfmaq_f32(_sum15, _val3, vdupq_n_f32(_w3[3]));
                     
-                    float32x4_t _w4 = vld1q_f32(kptr + 0);
+                    float32x4_t _w4 = vld1q_f32(kptr);
                     float32x4_t _w5 = vld1q_f32(kptr + 4);
                     float32x4_t _w6 = vld1q_f32(kptr + 8);
                     float32x4_t _w7 = vld1q_f32(kptr + 12);
@@ -236,18 +231,16 @@ void im2col_sgemm_conv2d_impl(
                     _sum2 = vfmaq_f32(_sum2, _val4, vdupq_n_f32(_w4[1]));
                     _sum4 = vfmaq_f32(_sum4, _val4, vdupq_n_f32(_w4[2]));
                     _sum6 = vfmaq_f32(_sum6, _val4, vdupq_n_f32(_w4[3]));
-
                     _sum1 = vfmaq_f32(_sum1, _val5, vdupq_n_f32(_w4[0]));
                     _sum3 = vfmaq_f32(_sum3, _val5, vdupq_n_f32(_w4[1]));
                     _sum5 = vfmaq_f32(_sum5, _val5, vdupq_n_f32(_w4[2]));
                     _sum7 = vfmaq_f32(_sum7, _val5, vdupq_n_f32(_w4[3]));
                     
-                    _sum8 = vfmaq_f32(_sum8, _val4, vdupq_n_f32(_w5[0]));
+                    _sum8  = vfmaq_f32(_sum8,  _val4, vdupq_n_f32(_w5[0]));
                     _sum10 = vfmaq_f32(_sum10, _val4, vdupq_n_f32(_w5[1]));
                     _sum12 = vfmaq_f32(_sum12, _val4, vdupq_n_f32(_w5[2]));
                     _sum14 = vfmaq_f32(_sum14, _val4, vdupq_n_f32(_w5[3]));
-
-                    _sum9 = vfmaq_f32(_sum9, _val5, vdupq_n_f32(_w5[0]));
+                    _sum9  = vfmaq_f32(_sum9,  _val5, vdupq_n_f32(_w5[0]));
                     _sum11 = vfmaq_f32(_sum11, _val5, vdupq_n_f32(_w5[1]));
                     _sum13 = vfmaq_f32(_sum13, _val5, vdupq_n_f32(_w5[2]));
                     _sum15 = vfmaq_f32(_sum15, _val5, vdupq_n_f32(_w5[3]));
@@ -256,18 +249,16 @@ void im2col_sgemm_conv2d_impl(
                     _sum2 = vfmaq_f32(_sum2, _val6, vdupq_n_f32(_w6[1]));
                     _sum4 = vfmaq_f32(_sum4, _val6, vdupq_n_f32(_w6[2]));
                     _sum6 = vfmaq_f32(_sum6, _val6, vdupq_n_f32(_w6[3]));
-
                     _sum1 = vfmaq_f32(_sum1, _val7, vdupq_n_f32(_w6[0]));
                     _sum3 = vfmaq_f32(_sum3, _val7, vdupq_n_f32(_w6[1]));
                     _sum5 = vfmaq_f32(_sum5, _val7, vdupq_n_f32(_w6[2]));
                     _sum7 = vfmaq_f32(_sum7, _val7, vdupq_n_f32(_w6[3]));
                     
-                    _sum8 = vfmaq_f32(_sum8, _val6, vdupq_n_f32(_w7[0]));
+                    _sum8  = vfmaq_f32(_sum8,  _val6, vdupq_n_f32(_w7[0]));
                     _sum10 = vfmaq_f32(_sum10, _val6, vdupq_n_f32(_w7[1]));
                     _sum12 = vfmaq_f32(_sum12, _val6, vdupq_n_f32(_w7[2]));
                     _sum14 = vfmaq_f32(_sum14, _val6, vdupq_n_f32(_w7[3]));
-
-                    _sum9 = vfmaq_f32(_sum9, _val7, vdupq_n_f32(_w7[0]));
+                    _sum9  = vfmaq_f32(_sum9,  _val7, vdupq_n_f32(_w7[0]));
                     _sum11 = vfmaq_f32(_sum11, _val7, vdupq_n_f32(_w7[1]));
                     _sum13 = vfmaq_f32(_sum13, _val7, vdupq_n_f32(_w7[2]));
                     _sum15 = vfmaq_f32(_sum15, _val7, vdupq_n_f32(_w7[3]));
@@ -280,24 +271,22 @@ void im2col_sgemm_conv2d_impl(
                     
                     float32x4_t _w0 = vld1q_f32(kptr);
                     float32x4_t _w1 = vld1q_f32(kptr + 4);
-                    kptr += 4;
+                    kptr += 8;
                     
                     _sum0 = vfmaq_f32(_sum0, _val0, vdupq_n_f32(_w0[0]));
                     _sum2 = vfmaq_f32(_sum2, _val0, vdupq_n_f32(_w0[1]));
                     _sum4 = vfmaq_f32(_sum4, _val0, vdupq_n_f32(_w0[2]));
                     _sum6 = vfmaq_f32(_sum6, _val0, vdupq_n_f32(_w0[3]));
-
                     _sum1 = vfmaq_f32(_sum1, _val1, vdupq_n_f32(_w0[0]));
                     _sum3 = vfmaq_f32(_sum3, _val1, vdupq_n_f32(_w0[1]));
                     _sum5 = vfmaq_f32(_sum5, _val1, vdupq_n_f32(_w0[2]));
                     _sum7 = vfmaq_f32(_sum7, _val1, vdupq_n_f32(_w0[3]));
                     
-                    _sum8 = vfmaq_f32(_sum8, _val0, vdupq_n_f32(_w1[0]));
+                    _sum8  = vfmaq_f32(_sum8,  _val0, vdupq_n_f32(_w1[0]));
                     _sum10 = vfmaq_f32(_sum10, _val0, vdupq_n_f32(_w1[1]));
                     _sum12 = vfmaq_f32(_sum12, _val0, vdupq_n_f32(_w1[2]));
                     _sum14 = vfmaq_f32(_sum14, _val0, vdupq_n_f32(_w1[3]));
-
-                    _sum9 = vfmaq_f32(_sum9, _val1, vdupq_n_f32(_w1[0]));
+                    _sum9  = vfmaq_f32(_sum9,  _val1, vdupq_n_f32(_w1[0]));
                     _sum11 = vfmaq_f32(_sum11, _val1, vdupq_n_f32(_w1[1]));
                     _sum13 = vfmaq_f32(_sum13, _val1, vdupq_n_f32(_w1[2]));
                     _sum15 = vfmaq_f32(_sum15, _val1, vdupq_n_f32(_w1[3]));
@@ -333,7 +322,7 @@ void im2col_sgemm_conv2d_impl(
                 const float* tmpptr = tmp_a[i / 8 + (i % 8) / 4].data();
                 const float* kptr = kernel_a[p / 8].data();
                 
-                int64_t nn = in_channels * kernelSize;
+                int64_t nn = input_channels * kernelSize;
                 
                 float32x4_t _b0 = vld1q_f32(biasptr);
                 float32x4_t _b1 = vld1q_f32(biasptr + 4);
@@ -443,7 +432,7 @@ void im2col_sgemm_conv2d_impl(
                 const float* tmpptr = tmp_a[i / 8 + (i % 8) / 4 + i % 4].data();
                 const float* kptr = kernel_a[p / 8].data();
                 
-                int64_t nn = in_channels * kernelSize;
+                int64_t nn = input_channels * kernelSize;
                 
                 float32x4_t _sum0 = vld1q_f32(biasptr);
                 float32x4_t _sum1 = vld1q_f32(biasptr + 4);
@@ -527,7 +516,7 @@ void im2col_sgemm_conv2d_impl(
     });
 #endif
     
-    ccOutChannel = (out_channels - ccRemainOutChannel) >> 2;
+    ccOutChannel = (output_channels - ccRemainOutChannel) >> 2;
     otter::parallel_for(0, ccOutChannel, 1, [&](int64_t start, int64_t end) {
         for (auto pp : otter::irange(start, end)) {
             int64_t p = ccRemainOutChannel + pp * 4;
@@ -548,7 +537,7 @@ void im2col_sgemm_conv2d_impl(
     #else
                 const float* kptr = kernel_a[p / 4].data();
     #endif
-                int64_t nn = in_channels * kernelSize;
+                int64_t nn = input_channels * kernelSize;
                 
                 
     #if __aarch64__
@@ -666,7 +655,7 @@ void im2col_sgemm_conv2d_impl(
     #else
                 const float* kptr = kernel_a[p / 4].data();
     #endif
-                int64_t nn = in_channels * kernelSize;
+                int64_t nn = input_channels * kernelSize;
                 
     #if __aarch64__
                 float32x4_t _b0 = vld1q_f32(biasptr);
@@ -741,7 +730,7 @@ void im2col_sgemm_conv2d_impl(
     #else
                 const float* kptr = kernel_a[p / 4].data();
     #endif
-                int64_t nn = in_channels * kernelSize;
+                int64_t nn = input_channels * kernelSize;
                 
     #if __aarch64__
                 float32x4_t _sum0 = vld1q_f32(biasptr);
@@ -803,7 +792,7 @@ void im2col_sgemm_conv2d_impl(
     
     ccRemainOutChannel += ccOutChannel << 2;
     
-    otter::parallel_for(ccRemainOutChannel, out_channels, 1, [&](int64_t start, int64_t end) {
+    otter::parallel_for(ccRemainOutChannel, output_channels, 1, [&](int64_t start, int64_t end) {
         for (auto c : otter::irange(start, end)) {
             float* outptr0 = output_a[c].data();
             const float bias0 = bias ? bias[c] : 0.f;
@@ -816,7 +805,7 @@ void im2col_sgemm_conv2d_impl(
     #else
                 const float* kptr = kernel_a[c / 4 + c % 4)].data();
     #endif
-                int64_t nn = in_channels * kernelSize;
+                int64_t nn = input_channels * kernelSize;
     #if __aarch64__
                 
                 float32x4_t _sum0 = vdupq_n_f32(bias0);
@@ -879,7 +868,7 @@ void im2col_sgemm_conv2d_impl(
                 const float* kptr = kernel_a[c / 4 + c % 4].data();
     #endif
                 
-                int64_t nn = in_channels * kernelSize;
+                int64_t nn = input_channels * kernelSize;
                 
     #if __aarch64__
                 float32x4_t _sum0 = vdupq_n_f32(bias0);
@@ -928,7 +917,7 @@ void im2col_sgemm_conv2d_impl(
     #else
                 const float* kptr = kernel_a[c / 4 + c % 4].data();
     #endif
-                int64_t nn = in_channels * kernelSize;
+                int64_t nn = input_channels * kernelSize;
                 
                 float32x4_t _sum0 = vdupq_n_f32(0.f);
                 
@@ -969,17 +958,17 @@ void im2col_sgemm_conv2d_impl(
 }
 
 #else
-void im2col_sgemm_conv2d_impl(const Tensor& im2col_, const Tensor& kernel_pack4x4_, const Tensor& bias_, int64_t n_input_planes, int64_t n_output_planes, Tensor& output) {}
+void im2col_sgemm_conv2d_impl(const Tensor& im2col_, const Tensor& kernel_pack4x4_, const Tensor& bias_, int64_t input_channels, int64_t output_channels, Tensor& output) {}
 #endif
 
 #ifdef __ARM_NEON__
-static void convolution_im2col_sgemm_transform_kernel_neon(const Tensor& kernel_, Tensor& kernel_tf, int64_t in_channels, int64_t out_channels, int64_t kernel_width, int64_t kernel_height) {
+static void convolution_im2col_sgemm_transform_kernel_neon(const Tensor& kernel_, Tensor& kernel_tf, int64_t input_channels, int64_t output_channels, int64_t kernel_width, int64_t kernel_height) {
     const int64_t kernelSize = kernel_width * kernel_height;
     
-    auto kernel = kernel_.view({out_channels, in_channels, kernelSize});
+    auto kernel = kernel_.view({output_channels, input_channels, kernelSize});
 
 #if __aarch64__
-    kernel_tf = otter::empty({out_channels / 8 + (out_channels % 8) / 4 + out_channels % 4, in_channels / 4 + in_channels % 4, 32 * kernelSize}, ScalarType::Float);
+    kernel_tf = otter::empty({output_channels / 8 + (output_channels % 8) / 4 + output_channels % 4, input_channels / 4 + input_channels % 4, 32 * kernelSize}, ScalarType::Float);
 #else
     kernel_tf = otter::empty({outch / 4 + outch % 4, inch / 4 + inch % 4, 16 * maxk}, ScalarType::Float);
 #endif
@@ -989,7 +978,7 @@ static void convolution_im2col_sgemm_transform_kernel_neon(const Tensor& kernel_
     auto kernel_tf_a = kernel_tf.accessor<float, 3>();
     
 #if __aarch64__
-    for (; q + 7 < out_channels; q += 8) {
+    for (; q + 7 < output_channels; q += 8) {
         const auto k0 = kernel_a[q];
         const auto k1 = kernel_a[q + 1];
         const auto k2 = kernel_a[q + 2];
@@ -1001,7 +990,7 @@ static void convolution_im2col_sgemm_transform_kernel_neon(const Tensor& kernel_
 
         float* g00 = kernel_tf_a[q / 8].data();
 
-        for (int p = 0; p < in_channels; p++) {
+        for (int p = 0; p < input_channels; p++) {
             const float* k00 = k0[p].data();
             const float* k10 = k1[p].data();
             const float* k20 = k2[p].data();
@@ -1027,7 +1016,7 @@ static void convolution_im2col_sgemm_transform_kernel_neon(const Tensor& kernel_
     }
 #endif
     
-    for (; q + 3 < out_channels; q += 4) {
+    for (; q + 3 < output_channels; q += 4) {
         const auto k0 = kernel_a[q];
         const auto k1 = kernel_a[q + 1];
         const auto k2 = kernel_a[q + 2];
@@ -1039,7 +1028,7 @@ static void convolution_im2col_sgemm_transform_kernel_neon(const Tensor& kernel_
         float* g00 = kernel_tf_a[q / 4].data();
 #endif
 
-        for (int p = 0; p < in_channels; p++) {
+        for (int p = 0; p < input_channels; p++) {
             const float* k00 = k0[p].data();
             const float* k10 = k1[p].data();
             const float* k20 = k2[p].data();
@@ -1055,7 +1044,7 @@ static void convolution_im2col_sgemm_transform_kernel_neon(const Tensor& kernel_
             }
         }
     }
-    for (; q < out_channels; q++) {
+    for (; q < output_channels; q++) {
         const auto k0 = kernel_a[q];
 
 #if __aarch64__
@@ -1064,7 +1053,7 @@ static void convolution_im2col_sgemm_transform_kernel_neon(const Tensor& kernel_
         float* g00 = kernel_tf_a[q / 4 + q % 4].data();
 #endif
 
-        for (int p = 0; p < in_channels; p++) {
+        for (int p = 0; p < input_channels; p++) {
             const float* k00 = k0[p].data();
 
             for (int k = 0; k < kernelSize; k++) {
@@ -1076,7 +1065,7 @@ static void convolution_im2col_sgemm_transform_kernel_neon(const Tensor& kernel_
     }
 }
 #else
-static void convolution_im2col_sgemm_transform_kernel_neon(const Tensor& _kernel, Tensor& kernel_tf, int64_t in_channels, int64_t out_chnnels, int64_t kernel_width, int64_t kernel_height) {}
+static void convolution_im2col_sgemm_transform_kernel_neon(const Tensor& _kernel, Tensor& kernel_tf, int64_t input_channels, int64_t out_chnnels, int64_t kernel_width, int64_t kernel_height) {}
 #endif
 
 Tensor& slow_conv2d_1x1s1_neon_out(
@@ -1101,10 +1090,10 @@ Tensor& slow_conv2d_1x1s1_neon_out(
     const int64_t dim_width  = 3;
     
     const Tensor input = self.contiguous();
-    const int64_t n_input_planes  = input.size(dim_planes);
+    const int64_t input_channels  = input.size(dim_planes);
     const int64_t input_height    = input.size(dim_height);
     const int64_t input_width     = input.size(dim_width);
-    const int64_t n_output_planes = weight.size(0);
+    const int64_t output_channels = weight.size(0);
     const int64_t output_height   = (input_height + 2 * pad_height - kernel_height) / stride_height + 1;
     const int64_t output_width    = (input_width  + 2 * pad_width  - kernel_width ) / stride_width  + 1;
     
@@ -1112,9 +1101,9 @@ Tensor& slow_conv2d_1x1s1_neon_out(
     
     Tensor im2col = self.view({self.size(0), self.size(1), -1});
     Tensor kernel_pack4x4;
-    otter::convolution_im2col_sgemm_transform_kernel_neon(weight, kernel_pack4x4, n_input_planes, n_output_planes, 1, 1);
-    output.resize_({batch_size, n_output_planes, output_height, output_width});
-    otter::im2col_sgemm_conv2d_impl(im2col, kernel_pack4x4, bias, n_input_planes, n_output_planes, output);
+    otter::convolution_im2col_sgemm_transform_kernel_neon(weight, kernel_pack4x4, input_channels, output_channels, 1, 1);
+    output.resize_({batch_size, output_channels, output_height, output_width});
+    otter::im2col_sgemm_conv2d_impl(im2col, kernel_pack4x4, bias, input_channels, output_channels, output);
     
     return output;
 }
@@ -1155,10 +1144,10 @@ Tensor& slow_conv2d_neon_out(
     const int64_t dim_width  = 3;
     
     const Tensor input = self.contiguous();
-    const int64_t n_input_planes  = input.size(dim_planes);
+    const int64_t input_channels  = input.size(dim_planes);
     const int64_t input_height    = input.size(dim_height);
     const int64_t input_width     = input.size(dim_width);
-    const int64_t n_output_planes = weight.size(0);
+    const int64_t output_channels = weight.size(0);
     const int64_t output_height   = (input_height + 2 * pad_height - kernel_height) / stride_height + 1;
     const int64_t output_width    = (input_width  + 2 * pad_width  - kernel_width ) / stride_width  + 1;
     
@@ -1166,15 +1155,15 @@ Tensor& slow_conv2d_neon_out(
     
     Tensor im2col = otter::im2col_cpu(input, kernel_size, stride, padding, {1, 1});
     Tensor kernel_pack4x4;
-    otter::convolution_im2col_sgemm_transform_kernel_neon(weight, kernel_pack4x4, n_input_planes, n_output_planes, kernel_width, kernel_height);
-    output.resize_({batch_size, n_output_planes, output_height, output_width});
+    otter::convolution_im2col_sgemm_transform_kernel_neon(weight, kernel_pack4x4, input_channels, output_channels, kernel_width, kernel_height);
+    output.resize_({batch_size, output_channels, output_height, output_width});
     
     im2col_sgemm_conv2d_impl(
         im2col,
         kernel_pack4x4,
         bias,
-        n_input_planes,
-        n_output_planes,
+        input_channels,
+        output_channels,
         output);
     
     return output;

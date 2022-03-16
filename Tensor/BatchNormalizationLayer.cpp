@@ -9,6 +9,7 @@
 #include "Normalization.hpp"
 #include "BatchNormalizationLayer.hpp"
 #include "TensorFactory.hpp"
+#include "Formatting.hpp"
 
 namespace otter {
 
@@ -34,15 +35,28 @@ int BatchNormalizationLayer::load_param(const ParamDict &pd) {
 
 int BatchNormalizationLayer::init_model() {
     auto shape_a = bottom_shapes[0].accessor<int, 1>();
-    alpha = otter::rand({shape_a[1]}, ScalarType::Float);
-    beta = otter::rand({shape_a[1]}, ScalarType::Float);
+    bias_data = otter::rand({shape_a[1]}, ScalarType::Float);
+    scale_data = otter::rand({shape_a[1]}, ScalarType::Float);
+    mean_data = otter::rand({shape_a[1]}, ScalarType::Float);
+    var_data = otter::rand({shape_a[1]}, ScalarType::Float);
+    
+    return 0;
+}
+
+int BatchNormalizationLayer::load_model(const Initializer& initializer) {
+    auto shape_a = bottom_shapes[0].accessor<int, 1>();
+    bias_data = initializer.load({shape_a[1]});
+    scale_data = initializer.load({shape_a[1]});
+    mean_data = initializer.load({shape_a[1]});
+    var_data = initializer.load({shape_a[1]});
     
     return 0;
 }
 
 int BatchNormalizationLayer::forward_inplace(Tensor& bottom_blob, const NetOption& opt) const {
     
-    bottom_blob = otter::batchnorm_alpha_beta(bottom_blob, alpha, beta);
+//    bottom_blob = otter::batchnorm_alpha_beta(bottom_blob, alpha, beta);
+    bottom_blob = otter::batchnorm(bottom_blob, scale_data, bias_data, mean_data, var_data, false, 0, 0.000001);
     
     return 0;
 }
